@@ -3,7 +3,7 @@ name: Update Training Data
 # Run this workflow once a day at 5 PM UTC
 on:
   schedule:
-    - cron: '0 18 * * *'  # Every day at 5:00 PM UTC
+    - cron: '0 17 * * *'  # Every day at 5:00 PM UTC
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
