@@ -75,6 +75,94 @@ def expand_all_content(driver, wait_time=3):
         # Wait for page to load
         time.sleep(2)
         
+        # FIRST: Force-show all hidden content using JavaScript
+        # This handles content that's in the DOM but hidden by CSS (the "gray" code in inspector)
+        try:
+            force_show_script = """
+            (function() {
+                // 1. Remove Bootstrap collapse classes and show collapsed content
+                var collapsedElements = document.querySelectorAll('.collapse:not(.show), .collapsing');
+                collapsedElements.forEach(function(el) {
+                    el.classList.remove('collapse', 'collapsing');
+                    el.classList.add('show');
+                    el.style.display = 'block';
+                    el.style.visibility = 'visible';
+                    el.style.height = 'auto';
+                    el.setAttribute('aria-expanded', 'true');
+                });
+                
+                // 2. Show all elements with display: none or visibility: hidden
+                var allElements = document.querySelectorAll('*');
+                allElements.forEach(function(el) {
+                    var style = window.getComputedStyle(el);
+                    if (style.display === 'none' && el.offsetParent === null) {
+                        // Check if it's not a script, style, or hidden by design
+                        var tag = el.tagName.toLowerCase();
+                        if (tag !== 'script' && tag !== 'style' && tag !== 'noscript' && 
+                            !el.classList.contains('d-none') && 
+                            !el.hasAttribute('hidden')) {
+                            el.style.display = '';
+                            el.style.visibility = 'visible';
+                        }
+                    }
+                    if (style.visibility === 'hidden' && el.offsetParent === null) {
+                        var tag = el.tagName.toLowerCase();
+                        if (tag !== 'script' && tag !== 'style' && tag !== 'noscript') {
+                            el.style.visibility = 'visible';
+                        }
+                    }
+                });
+                
+                // 3. Expand all accordion/collapse panels
+                var collapsePanels = document.querySelectorAll('[class*="collapse"]:not(.show)');
+                collapsePanels.forEach(function(el) {
+                    el.classList.add('show');
+                    el.classList.remove('collapse', 'collapsing');
+                    el.style.display = 'block';
+                    el.setAttribute('aria-expanded', 'true');
+                });
+                
+                // 4. Remove aria-hidden attributes
+                var hiddenElements = document.querySelectorAll('[aria-hidden="true"]');
+                hiddenElements.forEach(function(el) {
+                    // Only if it's not a decorative element
+                    if (!el.classList.contains('sr-only') && 
+                        !el.classList.contains('visually-hidden')) {
+                        el.setAttribute('aria-hidden', 'false');
+                        var style = window.getComputedStyle(el);
+                        if (style.display === 'none') {
+                            el.style.display = '';
+                        }
+                    }
+                });
+                
+                // 5. Force expand Bootstrap accordions
+                var accordionButtons = document.querySelectorAll('[data-bs-toggle="collapse"], [data-toggle="collapse"]');
+                accordionButtons.forEach(function(btn) {
+                    var targetId = btn.getAttribute('data-bs-target') || btn.getAttribute('data-target') || btn.getAttribute('href');
+                    if (targetId) {
+                        if (targetId.startsWith('#')) targetId = targetId.substring(1);
+                        var target = document.getElementById(targetId) || document.querySelector(targetId);
+                        if (target) {
+                            target.classList.add('show');
+                            target.classList.remove('collapse', 'collapsing');
+                            target.style.display = 'block';
+                            target.setAttribute('aria-expanded', 'true');
+                            btn.setAttribute('aria-expanded', 'true');
+                            btn.classList.remove('collapsed');
+                        }
+                    }
+                });
+                
+                return 'Forced show complete';
+            })();
+            """
+            result = driver.execute_script(force_show_script)
+            time.sleep(1)  # Wait for styles to apply
+            print(f"  ✓ Force-showed hidden CSS content")
+        except Exception as e:
+            print(f"  ⚠ Could not force-show CSS content: {e}")
+        
         # Scroll to load lazy content
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(1)
@@ -167,9 +255,48 @@ def expand_all_content(driver, wait_time=3):
         if expanded_count > 0:
             print(f"  ✓ Expanded {expanded_count} hidden sections")
         
+        # Final pass: Force-show any remaining hidden content
+        final_show_script = """
+        (function() {
+            // Final pass to catch anything we missed
+            var allHidden = document.querySelectorAll('.collapse:not(.show), [style*="display: none"], [style*="display:none"]');
+            allHidden.forEach(function(el) {
+                var tag = el.tagName.toLowerCase();
+                if (tag !== 'script' && tag !== 'style' && tag !== 'noscript') {
+                    el.classList.remove('collapse', 'collapsing', 'd-none');
+                    el.classList.add('show');
+                    el.style.display = '';
+                    el.style.visibility = 'visible';
+                    el.style.height = 'auto';
+                    el.setAttribute('aria-expanded', 'true');
+                    el.removeAttribute('hidden');
+                }
+            });
+            return 'Final show complete';
+        })();
+        """
+        try:
+            driver.execute_script(final_show_script)
+            time.sleep(0.5)
+        except:
+            pass
+        
         # Final scroll to bottom to load any lazy-loaded content
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(wait_time)
+        
+        # One more scroll up and down to trigger any remaining lazy loads
+        driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.5)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
+        
+        # One last force-show pass after all scrolling
+        try:
+            driver.execute_script(final_show_script)
+            time.sleep(0.5)
+        except:
+            pass
         
     except Exception as e:
         print(f"  ⚠ Warning during expansion: {e}")
@@ -201,16 +328,25 @@ def extract_text_from_html(html):
 def scrape_with_selenium(url, driver, timeout=30):
     """Scrape a URL using Selenium to get all content including JavaScript-rendered and hidden content."""
     try:
+        # Check if driver session is still valid
+        try:
+            driver.current_url
+        except:
+            raise Exception("Driver session invalid")
+        
         driver.set_page_load_timeout(timeout)
         driver.get(url)
         
         # Wait for page to be interactive
-        WebDriverWait(driver, timeout).until(
+        WebDriverWait(driver, min(timeout, 20)).until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
         
+        # Additional wait for JavaScript to finish executing
+        time.sleep(1)
+        
         # Expand all hidden content
-        expand_all_content(driver)
+        expand_all_content(driver, wait_time=2.5)
         
         # Get the final HTML after all expansions
         html = driver.page_source
@@ -223,6 +359,9 @@ def scrape_with_selenium(url, driver, timeout=30):
         print(f"  ⚠ Page load timeout")
         return None
     except Exception as e:
+        error_msg = str(e)
+        if "invalid session id" in error_msg.lower() or "session" in error_msg.lower():
+            raise Exception("Driver session invalid")  # Re-raise to trigger driver recreation
         print(f"  ⚠ Error with Selenium: {e}")
         return None
 
@@ -261,8 +400,28 @@ def load_training_data():
                 try:
                     text = scrape_with_selenium(link, driver, timeout=30)
                 except Exception as e:
-                    print(f"  ⚠ Selenium failed: {e}")
-                    text = None
+                    error_msg = str(e).lower()
+                    # If session is invalid, try to recreate driver
+                    if "session" in error_msg or "invalid" in error_msg:
+                        print(f"  ⚠ Driver session lost, recreating...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver = setup_selenium_driver()
+                        if driver:
+                            # Retry once with new driver
+                            try:
+                                text = scrape_with_selenium(link, driver, timeout=30)
+                            except:
+                                text = None
+                        else:
+                            print(f"  ⚠ Could not recreate driver, falling back to basic scraping")
+                            use_selenium = False
+                            text = None
+                    else:
+                        print(f"  ⚠ Selenium failed: {e}")
+                        text = None
             
             # Fallback to basic HTML scraping if Selenium failed or not available
             if not text:
