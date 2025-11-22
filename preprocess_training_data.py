@@ -582,8 +582,8 @@ def load_training_data():
                     text = extract_text_from_html(html)
             
             if text:
-                # Limit to 5000 characters (same as in the chatbot)
-                training_data[link] = text[:5000]
+                # Store all text (no character limit - we want ALL content)
+                training_data[link] = text
                 print(f"  ✓ Loaded {len(text)} characters")
             else:
                 print(f"  ✗ Failed to load")
