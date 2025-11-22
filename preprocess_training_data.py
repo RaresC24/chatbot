@@ -154,93 +154,195 @@ def expand_all_content(driver, wait_time=3):
                     }
                 });
                 
+                // 6. AGGRESSIVE: Show ALL hidden elements (catch everything, including Odoo)
+                // This is more aggressive - shows anything that's hidden unless it's clearly not content
+                var allElements = document.querySelectorAll('*');
+                allElements.forEach(function(el) {
+                    var tag = el.tagName.toLowerCase();
+                    // Skip script, style, noscript, and meta tags
+                    if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'meta' || tag === 'link') {
+                        return;
+                    }
+                    
+                    var style = window.getComputedStyle(el);
+                    var isHidden = style.display === 'none' || 
+                                   style.visibility === 'hidden' || 
+                                   style.opacity === '0' ||
+                                   el.offsetParent === null ||
+                                   el.hasAttribute('hidden') ||
+                                   el.classList.contains('d-none') ||
+                                   el.classList.contains('hidden') ||
+                                   el.classList.contains('o_hidden');
+                    
+                    // If hidden and not a structural/system element, show it
+                    if (isHidden) {
+                        // Check if it has text content or child elements with content
+                        var hasContent = el.textContent.trim().length > 0 || 
+                                       el.querySelector('img, video, iframe') !== null ||
+                                       el.children.length > 0;
+                        
+                        // Show if it has content or is an Odoo element
+                        if (hasContent || el.classList.toString().includes('o_') || el.hasAttribute('contenteditable')) {
+                            el.style.display = '';
+                            el.style.visibility = 'visible';
+                            el.style.opacity = '1';
+                            el.style.height = 'auto';
+                            el.style.maxHeight = 'none';
+                            el.classList.remove('d-none', 'hidden', 'collapse', 'o_hidden', 'collapsed');
+                            el.removeAttribute('hidden');
+                            el.setAttribute('aria-expanded', 'true');
+                        }
+                    }
+                });
+                
+                // 7. Special Odoo handling - force show all Odoo classes
+                var odooSelectors = [
+                    '[class*="o_"]',
+                    '[contenteditable="true"]',
+                    '.o_editable',
+                    '.note-editable',
+                    '[class*="o_field"]',
+                    '[class*="o_website"]',
+                    '[class*="o_snippet"]',
+                    '[class*="o_field_widget"]',
+                    '[class*="o_website_block"]'
+                ];
+                
+                odooSelectors.forEach(function(selector) {
+                    try {
+                        var elements = document.querySelectorAll(selector);
+                        elements.forEach(function(el) {
+                            el.style.display = '';
+                            el.style.visibility = 'visible';
+                            el.style.opacity = '1';
+                            el.style.height = 'auto';
+                            el.style.maxHeight = 'none';
+                            el.classList.remove('d-none', 'hidden', 'collapse', 'o_hidden', 'collapsed');
+                            el.removeAttribute('hidden');
+                        });
+                    } catch(e) {}
+                });
+                
+                // 8. Click all Odoo expand/collapse buttons if they exist
+                var odooButtons = document.querySelectorAll('[class*="o_btn"], [class*="o_toggle"], button[class*="o_"], a[class*="o_"]');
+                odooButtons.forEach(function(btn) {
+                    var text = (btn.textContent || '').toLowerCase();
+                    if (text.includes('expand') || text.includes('show') || text.includes('more') || 
+                        btn.getAttribute('aria-expanded') === 'false') {
+                        try {
+                            btn.click();
+                        } catch(e) {}
+                    }
+                });
+                
                 return 'Forced show complete';
             })();
             """
             result = driver.execute_script(force_show_script)
-            time.sleep(1)  # Wait for styles to apply
-            print(f"  ✓ Force-showed hidden CSS content")
+            time.sleep(1.5)  # Wait longer for Odoo content to render
+            print(f"  ✓ Force-showed hidden CSS content (including Odoo)")
+            
+            # Additional wait and scroll to trigger Odoo lazy loading
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(0.5)
+            driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(0.5)
+            
+            # Run force-show one more time after scrolling (Odoo might load content on scroll)
+            try:
+                driver.execute_script(force_show_script)
+                time.sleep(0.5)
+            except:
+                pass
         except Exception as e:
             print(f"  ⚠ Could not force-show CSS content: {e}")
         
         # Scroll to load lazy content
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1)
+        time.sleep(0.5)
         driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
+        time.sleep(0.5)
         
+        # Track clicked elements to prevent duplicates (this fixes the 97 clicks issue)
+        clicked_elements = set()
         expanded_count = 0
-        max_iterations = 10  # Prevent infinite loops
+        max_iterations = 4  # Reduced - most should be handled by force-show script
         iteration = 0
         
         while iteration < max_iterations:
             iteration += 1
             found_any = False
             
-            # Find all potential expandable elements
+            # More specific selectors - only target truly expandable elements (not already expanded)
             selectors = [
-                # Common button patterns
+                # Only unexpanded elements
                 "button[aria-expanded='false']",
-                "button[aria-expanded='true']",  # Sometimes we need to toggle
                 "a[aria-expanded='false']",
-                "div[aria-expanded='false']",
+                "[data-bs-toggle='collapse'][aria-expanded='false']",
+                "[data-toggle='collapse'][aria-expanded='false']",
                 
-                # Text-based selectors (case-insensitive)
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'read more')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'expand')]",
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'more')]",
-                "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more')]",
-                "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'read more')]",
-                
-                # Class-based selectors
-                "[class*='expand']",
-                "[class*='collapse']",
-                "[class*='accordion']",
-                "[class*='toggle']",
-                "[class*='show-more']",
-                "[class*='read-more']",
-                "[class*='hidden']",
-                "[class*='collapsed']",
-                
-                # Data attributes
-                "[data-toggle='collapse']",
-                "[data-bs-toggle='collapse']",
-                "[data-target*='collapse']",
-                "[data-bs-target*='collapse']",
+                # Text-based (only if not already expanded)
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more') and not(@aria-expanded='true')]",
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'read more') and not(@aria-expanded='true')]",
+                "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more') and not(@aria-expanded='true')]",
             ]
             
             for selector in selectors:
                 try:
                     if selector.startswith("//"):
-                        # XPath selector
                         elements = driver.find_elements(By.XPATH, selector)
                     else:
-                        # CSS selector
                         elements = driver.find_elements(By.CSS_SELECTOR, selector)
                     
                     for element in elements:
                         try:
+                            # Create unique ID for element to prevent duplicate clicks
+                            try:
+                                element_id = element.get_attribute('id') or ''
+                                element_class = element.get_attribute('class') or ''
+                                element_text = (element.text or '')[:30]
+                                unique_id = f"{element.tag_name}_{element_id}_{element_class}_{element_text}"
+                            except:
+                                try:
+                                    location = element.location
+                                    unique_id = f"{element.tag_name}_{location['x']}_{location['y']}"
+                                except:
+                                    continue
+                            
+                            # Skip if already clicked
+                            if unique_id in clicked_elements:
+                                continue
+                            
                             # Check if element is visible and clickable
                             if element.is_displayed():
+                                # Double-check it's actually collapsed
+                                aria_expanded = element.get_attribute('aria-expanded')
+                                if aria_expanded == 'true':
+                                    continue  # Already expanded, skip
+                                
                                 # Scroll element into view
-                                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                                time.sleep(0.3)
+                                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+                                time.sleep(0.2)
                                 
                                 # Try clicking
-                                element.click()
-                                found_any = True
-                                expanded_count += 1
-                                time.sleep(0.5)  # Wait for content to expand
-                        except (ElementClickInterceptedException, NoSuchElementException):
-                            # Try JavaScript click as fallback
-                            try:
-                                driver.execute_script("arguments[0].click();", element)
-                                found_any = True
-                                expanded_count += 1
-                                time.sleep(0.5)
-                            except:
-                                pass
+                                try:
+                                    element.click()
+                                    clicked_elements.add(unique_id)
+                                    found_any = True
+                                    expanded_count += 1
+                                    time.sleep(0.4)  # Reduced wait time
+                                except (ElementClickInterceptedException, NoSuchElementException):
+                                    # Try JavaScript click as fallback
+                                    try:
+                                        driver.execute_script("arguments[0].click();", element)
+                                        clicked_elements.add(unique_id)
+                                        found_any = True
+                                        expanded_count += 1
+                                        time.sleep(0.4)
+                                    except:
+                                        pass
+                        except Exception:
+                            continue
                 except:
                     continue
             
@@ -249,13 +351,13 @@ def expand_all_content(driver, wait_time=3):
                 break
             
             # Scroll down to find more elements
-            driver.execute_script("window.scrollBy(0, 500);")
-            time.sleep(0.5)
+            driver.execute_script("window.scrollBy(0, 400);")
+            time.sleep(0.3)
         
         if expanded_count > 0:
             print(f"  ✓ Expanded {expanded_count} hidden sections")
         
-        # Final pass: Force-show any remaining hidden content
+        # Final pass: Force-show any remaining hidden content (including Odoo)
         final_show_script = """
         (function() {
             // Final pass to catch anything we missed
@@ -272,6 +374,41 @@ def expand_all_content(driver, wait_time=3):
                     el.removeAttribute('hidden');
                 }
             });
+            
+            // Final aggressive pass - show ALL hidden content including Odoo
+            var allHidden = document.querySelectorAll('*');
+            allHidden.forEach(function(el) {
+                var tag = el.tagName.toLowerCase();
+                if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'meta' || tag === 'link') {
+                    return;
+                }
+                
+                var style = window.getComputedStyle(el);
+                var isHidden = style.display === 'none' || 
+                               style.visibility === 'hidden' || 
+                               style.opacity === '0' ||
+                               el.offsetParent === null;
+                
+                // If hidden and has content or is Odoo-related, show it
+                if (isHidden) {
+                    var hasContent = el.textContent.trim().length > 0 || 
+                                   el.querySelector('img, video, iframe') !== null ||
+                                   el.children.length > 0 ||
+                                   el.classList.toString().includes('o_') ||
+                                   el.hasAttribute('contenteditable');
+                    
+                    if (hasContent) {
+                        el.style.display = '';
+                        el.style.visibility = 'visible';
+                        el.style.opacity = '1';
+                        el.style.height = 'auto';
+                        el.style.maxHeight = 'none';
+                        el.classList.remove('d-none', 'hidden', 'collapse', 'o_hidden', 'collapsed');
+                        el.removeAttribute('hidden');
+                    }
+                }
+            });
+            
             return 'Final show complete';
         })();
         """
@@ -389,9 +526,24 @@ def load_training_data():
         training_data = {}
         valid_links = []
         
+        # Proactively restart driver every N pages to prevent crashes
+        DRIVER_RESTART_INTERVAL = 5  # Restart every 5 pages
+        
         for i, link in enumerate(links, 1):
             print(f"[{i}/{len(links)}] Processing: {link}")
             valid_links.append(link)
+            
+            # Proactively restart driver every N pages to prevent crashes
+            if use_selenium and i > 1 and (i - 1) % DRIVER_RESTART_INTERVAL == 0:
+                print(f"  🔄 Proactively restarting driver (every {DRIVER_RESTART_INTERVAL} pages)...")
+                try:
+                    driver.quit()
+                except:
+                    pass
+                driver = setup_selenium_driver()
+                if not driver:
+                    print(f"  ⚠ Could not recreate driver, falling back to basic scraping")
+                    use_selenium = False
             
             text = None
             
