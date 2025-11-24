@@ -205,7 +205,9 @@ def expand_all_content(driver, wait_time=3):
                     '[class*="o_website"]',
                     '[class*="o_snippet"]',
                     '[class*="o_field_widget"]',
-                    '[class*="o_website_block"]'
+                    '[class*="o_website_block"]',
+                    '.tab-pane', // Bootstrap tabs
+                    '[role="tabpanel"]' // ARIA tabs
                 ];
                 
                 odooSelectors.forEach(function(selector) {
@@ -217,7 +219,8 @@ def expand_all_content(driver, wait_time=3):
                             el.style.opacity = '1';
                             el.style.height = 'auto';
                             el.style.maxHeight = 'none';
-                            el.classList.remove('d-none', 'hidden', 'collapse', 'o_hidden', 'collapsed');
+                            el.classList.remove('d-none', 'hidden', 'collapse', 'o_hidden', 'collapsed', 'fade');
+                            el.classList.add('active', 'show'); // For tabs
                             el.removeAttribute('hidden');
                         });
                     } catch(e) {}
@@ -233,6 +236,22 @@ def expand_all_content(driver, wait_time=3):
                             btn.click();
                         } catch(e) {}
                     }
+                });
+
+                // 9. Activate all tabs
+                var tabs = document.querySelectorAll('[data-toggle="tab"], [data-bs-toggle="tab"], [role="tab"], .nav-link');
+                tabs.forEach(function(tab) {
+                    try {
+                        tab.classList.add('active');
+                        var targetId = tab.getAttribute('href') || tab.getAttribute('data-target') || tab.getAttribute('data-bs-target');
+                        if (targetId && targetId.startsWith('#')) {
+                            var target = document.querySelector(targetId);
+                            if (target) {
+                                target.classList.add('active', 'show');
+                                target.style.display = 'block';
+                            }
+                        }
+                    } catch(e) {}
                 });
                 
                 return 'Forced show complete';
@@ -281,10 +300,18 @@ def expand_all_content(driver, wait_time=3):
                 "[data-bs-toggle='collapse'][aria-expanded='false']",
                 "[data-toggle='collapse'][aria-expanded='false']",
                 
+                # Tabs
+                "[role='tab']",
+                ".nav-link",
+                
                 # Text-based (only if not already expanded)
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more') and not(@aria-expanded='true')]",
                 "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'read more') and not(@aria-expanded='true')]",
                 "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'show more') and not(@aria-expanded='true')]",
+                
+                # Generic "Show" buttons often used in Odoo
+                "//button[contains(text(), 'Show')]",
+                "//a[contains(text(), 'Show')]",
             ]
             
             for selector in selectors:
@@ -315,9 +342,12 @@ def expand_all_content(driver, wait_time=3):
                             
                             # Check if element is visible and clickable
                             if element.is_displayed():
-                                # Double-check it's actually collapsed
+                                # Double-check it's actually collapsed (unless it's a tab)
                                 aria_expanded = element.get_attribute('aria-expanded')
-                                if aria_expanded == 'true':
+                                role = element.get_attribute('role')
+                                is_tab = role == 'tab' or 'nav-link' in (element.get_attribute('class') or '')
+                                
+                                if aria_expanded == 'true' and not is_tab:
                                     continue  # Already expanded, skip
                                 
                                 # Scroll element into view
