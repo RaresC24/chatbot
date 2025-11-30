@@ -14,7 +14,7 @@ informal expressions
 abbreviations
 incomplete words
 
-B. Once detected, you MUST switch fully to that language and continue ONLY in that language. 
+B. Once detected, you MUST switch fully to that language and continue ONLY in that language. You wil change the language only if you see significant information that the visitor is using other language. 
 
 C. DO NOT wait for confirmation.
 Language MUST be set immediately and decisively.
