@@ -37,13 +37,15 @@ if (!logContent.trim()) {
 
 // Prepare EmailJS payload
 // We use the existing template parameters. We'll stuff the CSV into the 'message' field.
+const messageBody = "Daily Conversation Log (" + new Date().toISOString().split('T')[0] + "):\n\n" + logContent;
+
 const templateParams = {
     to_email: RECIPIENT_EMAIL,
     from_name: "Chatbot Daily Log",
     from_email: "noreply@chatbot.com",
     phone: "N/A",
     company: "System Log",
-    message: `Daily Conversation Log (${new Date().toISOString().split('T')[0]}):\n\n${logContent}`
+    message: messageBody
 };
 
 const data = JSON.stringify({
