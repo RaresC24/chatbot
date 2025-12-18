@@ -36,8 +36,77 @@ if (!logContent.trim()) {
 }
 
 // Prepare EmailJS payload
-// We use the existing template parameters. We'll stuff the CSV into the 'message' field.
-const messageBody = "Daily Conversation Log (" + new Date().toISOString().split('T')[0] + "):\n\n" + logContent;
+// Parse CSV locally (since we don't have npm modules)
+// Handles "quoted string with newlines" basic CSV format
+function parseCSV(text) {
+    const records = [];
+    let currentRecord = [];
+    let currentField = "";
+    let insideQuotes = false;
+
+    // Iterate char by char to handle quotes correctly
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const nextChar = text[i + 1];
+
+        if (char === '"') {
+            if (insideQuotes && nextChar === '"') {
+                // Escaped quote ("") -> add one quote
+                currentField += '"';
+                i++; // Skip next quote
+            } else {
+                // Toggle state
+                insideQuotes = !insideQuotes;
+            }
+        } else if (char === ',' && !insideQuotes) {
+            // End of field
+            currentRecord.push(currentField);
+            currentField = "";
+        } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+            // End of line/record (handle \r\n or \n)
+            if (char === '\r' && nextChar === '\n') {
+                i++; // Skip \n
+            }
+            // Only add if not empty (avoids trailing newlines)
+            if (currentField || currentRecord.length > 0) {
+                currentRecord.push(currentField);
+                records.push(currentRecord);
+                currentRecord = [];
+                currentField = "";
+            }
+        } else {
+            currentField += char;
+        }
+    }
+    // Push last record if exists
+    if (currentField || currentRecord.length > 0) {
+        currentRecord.push(currentField);
+        records.push(currentRecord);
+    }
+    return records;
+}
+
+const parsedLogs = parseCSV(logContent);
+let formattedBody = "Daily Conversation Log (" + new Date().toISOString().split('T')[0] + "):\n\n";
+
+// CSV Format: conversationId, timestamp, ip, country, languages, transcript
+// Skip header row if present (simple heuristic: check if first col is "conversationId")
+parsedLogs.forEach((row, index) => {
+    if (row.length < 5) return; // Skip malformed rows
+    if (index === 0 && row[0] === 'conversationId') return; // Skip header
+
+    const [id, time, ip, country, langs, transcript] = row;
+
+    formattedBody += "• Conversation ID: " + id + "\n";
+    formattedBody += "   Date: " + time + "\n";
+    formattedBody += "   IP: " + ip + " (" + country + ")\n";
+    formattedBody += "   Languages: " + langs + "\n";
+    formattedBody += "   Transcript:\n";
+    formattedBody += "   " + (transcript ? transcript.replace(/\n/g, "\n   ") : "No content") + "\n";
+    formattedBody += "\n--------------------------------------------------\n\n";
+});
+
+const messageBody = formattedBody;
 
 const templateParams = {
     to_email: RECIPIENT_EMAIL,
