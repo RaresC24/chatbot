@@ -3,16 +3,20 @@ const https = require('https');
 
 // Configuration
 const SERVICE_ID = "service_68xgedh";
-const TEMPLATE_ID = "template_u1hvzzd";
+const TEMPLATE_ID = "template_zprihej";
 const PUBLIC_KEY = "mgWI0Qdo5rJtWHBrz";
 // Private key must be provided via environment variable for server-side sending
 const PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY;
-const RECIPIENT_EMAIL = "claudiu.cotfas@gmail.com";
 
 if (!PRIVATE_KEY) {
     console.error("Error: EMAILJS_PRIVATE_KEY env variable is missing.");
     process.exit(1);
 }
+
+// Parse command line arguments
+const args = process.argv.slice(2);
+const modeArg = args.find(arg => arg.startsWith('--mode='));
+const MODE = modeArg ? modeArg.split('=')[1].toUpperCase() : 'DAILY'; // 'DAILY' or 'RESET'
 
 // Read the log file
 const logFile = 'conversations.csv';
@@ -87,14 +91,72 @@ function parseCSV(text) {
 }
 
 const parsedLogs = parseCSV(logContent);
-let formattedBody = "Daily Conversation Log (" + new Date().toISOString().split('T')[0] + "):\n\n";
 
-// CSV Format: conversationId, timestamp, ip, country, languages, transcript
-// Skip header row if present (simple heuristic: check if first col is "conversationId")
-parsedLogs.forEach((row, index) => {
-    if (row.length < 5) return; // Skip malformed rows
-    if (index === 0 && row[0] === 'conversationId') return; // Skip header
+// Filter logic based on MODE
+let logsToSend = [];
+const now = new Date();
+const todayString = now.toISOString().split('T')[0];
+const oneDay = 24 * 60 * 60 * 1000;
 
+// Helper to check if a date string is valid and return Date object
+function parseDate(dateStr) {
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? null : d;
+}
+
+// Skip header (row 0) for processing
+const dataRows = parsedLogs.slice(1).filter(row => row.length >= 6); // Ensure enough columns
+
+if (MODE === 'RESET') {
+    console.log("Mode: RESET - Sending logs from the last 7 days (ignoring 'today' activity check).");
+
+    // Filter for last 7 days
+    const sevenDaysAgo = new Date(now.getTime() - (7 * oneDay));
+    logsToSend = dataRows.filter(row => {
+        const rowDate = parseDate(row[1]);
+        if (!rowDate) return false;
+        return rowDate >= sevenDaysAgo;
+    });
+} else {
+    // Mode: DAILY
+    // 1. Check if there are any conversations from TODAY
+    const hasTodayActivity = dataRows.some(row => {
+        const dateStr = row[1]; // Index 1 is Date
+        return dateStr && dateStr.startsWith(todayString);
+    });
+
+    if (!hasTodayActivity) {
+        console.log(`Mode: DAILY - No conversations found for today (${todayString}). Skipping email.`);
+        process.exit(0);
+    }
+
+    console.log("Mode: DAILY - Found activity today. Preparing email with last 7 days of logs.");
+
+    // 2. Filter for last 7 days
+    const sevenDaysAgo = new Date(now.getTime() - (7 * oneDay));
+
+    logsToSend = dataRows.filter(row => {
+        const rowDate = parseDate(row[1]);
+        if (!rowDate) return false;
+        return rowDate >= sevenDaysAgo;
+    });
+}
+
+if (logsToSend.length === 0) {
+    console.log("No logs matched the criteria to send.");
+    process.exit(0);
+}
+
+// Sort logs from newest to oldest
+logsToSend.sort((a, b) => {
+    const dateA = parseDate(a[1]);
+    const dateB = parseDate(b[1]);
+    return dateB - dateA; // Descending order
+});
+
+let formattedBody = `Conversation Log (${MODE === 'RESET' ? 'ALL HISTORY' : 'Last 7 Days'}) - Generated: ${todayString}\n\n`;
+
+logsToSend.forEach((row) => {
     const [id, time, ip, country, langs, transcript] = row;
 
     formattedBody += "• Conversation ID: " + id + "\n";
@@ -109,7 +171,6 @@ parsedLogs.forEach((row, index) => {
 const messageBody = formattedBody;
 
 const templateParams = {
-    to_email: RECIPIENT_EMAIL,
     from_name: "Chatbot Daily Log",
     from_email: "noreply@chatbot.com",
     phone: "N/A",
